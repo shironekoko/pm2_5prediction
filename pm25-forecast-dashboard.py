@@ -57,6 +57,10 @@ def make_forecast(model, dataset):
     if 'pm_2_5_roll_rate_3' not in dataset.columns:
         dataset['pm_2_5_roll_rate_3'] = dataset['pm_2_5'].rolling(window=3*24, min_periods=1).mean()
     
+    # Remove unnecessary columns
+    columns_to_remove = ['Unnamed: 0', 'timezone', 'pm_10']
+    dataset = dataset.drop(columns=[col for col in columns_to_remove if col in dataset.columns])
+    
     # Run setup() with the dataset and target column
     setup(data=dataset, target='pm_2_5', session_id=123)
     
@@ -305,3 +309,6 @@ app.layout = html.Div([
         html.P("อัพเดทล่าสุด: " + datetime.now().strftime("%d/%m/%Y %H:%M"))
     ])
 ])
+
+if __name__ == '__main__':
+    app.run_server(debug=True)
