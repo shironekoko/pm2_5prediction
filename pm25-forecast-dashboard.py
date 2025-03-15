@@ -58,7 +58,7 @@ def make_forecast(model, dataset):
         dataset['pm_2_5_roll_rate_3'] = dataset['pm_2_5'].rolling(window=3*24, min_periods=1).mean()
     
     # Run setup() with the dataset and target column
-    setup(data=dataset, target='pm_2_5', silent=True, session_id=123)
+    setup(data=dataset, target='pm_2_5', session_id=123)
     
     # สร้าง future_df สำหรับการทำนาย 7 วันข้างหน้า
     last_timestamp = dataset['timestamp'].max()
