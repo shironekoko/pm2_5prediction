@@ -8,6 +8,12 @@ import numpy as np
 import pickle
 from datetime import datetime, timedelta
 
+# ฟังก์ชันดึงข้อมูลจากไฟล์ Excel
+def fetch_data_from_excel(file_path):
+    df = pd.read_excel(file_path)
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    return df
+
 # โหลดโมเดลที่เทรนไว้แล้ว
 def load_model():
     try:
@@ -18,33 +24,15 @@ def load_model():
         print(f"ไม่สามารถโหลดโมเดลได้: {e}")
         return None
 
-# โหลดข้อมูลล่าสุด
+# โหลดข้อมูลล่าสุดจากไฟล์ Excel
 def load_latest_data():
     try:
-        data = pd.read_excel('cleaned_data.xlsx')
-        data['timestamp'] = pd.to_datetime(data['timestamp'], errors='coerce')
+        file_path = 'cleaned_data.xlsx'  # ระบุเส้นทางไปยังไฟล์ Excel
+        data = fetch_data_from_excel(file_path)
         return data
     except Exception as e:
         print(f"ไม่สามารถโหลดข้อมูลได้: {e}")
-        # สร้างข้อมูลตัวอย่างถ้าไม่สามารถโหลดได้
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=30)
-        dates = pd.date_range(start=start_date, end=end_date, freq='h')  # แก้ไข 'H' เป็น 'h'
-        sample_data = pd.DataFrame({
-            'timestamp': dates,
-            'pm_2_5': np.random.normal(50, 15, len(dates)),
-            'humidity': np.random.normal(70, 10, len(dates)),
-            'temperature': np.random.normal(30, 5, len(dates))
-        })
-
-        # เพิ่มคอลัมน์ที่จำเป็น
-        sample_data['day'] = sample_data['timestamp'].dt.day
-        sample_data['hour'] = sample_data['timestamp'].dt.hour
-        
-        # คำนวณ rolling_rate_3 ล่วงหน้า
-        sample_data['pm_2_5_roll_rate_3'] = sample_data['pm_2_5'].rolling(window=3*24, min_periods=1).mean()
-        
-        return sample_data
+        return None
 
 # ทำการพยากรณ์ตามวิธีที่คุณระบุ
 def make_forecast(model, dataset):
@@ -140,16 +128,14 @@ def make_forecast(model, dataset):
 def get_aqi_category(pm25):
     if pm25 < 25:
         return "ดีมาก", "#a8e05f"
-    elif pm25 < 37:
-        return "ดี", "#87c13c"
     elif pm25 < 50:
+        return "ดี", "#87c13c"
+    elif pm25 < 100:
         return "ปานกลาง", "#f8cd38"
-    elif pm25 < 90:
+    elif pm25 < 200:
         return "เริ่มมีผลกระทบต่อสุขภาพ", "#f89d3e"
-    elif pm25 < 180:
+    elif pm25 >= 201:
         return "มีผลกระทบต่อสุขภาพ", "#e93f33"
-    else:
-        return "อันตราย", "#af2e24"
 
 # สร้าง Dash app
 app = dash.Dash(__name__, meta_tags=[
@@ -160,24 +146,33 @@ server = app.server
 # โหลดโมเดลและข้อมูล
 model = load_model()
 latest_data = load_latest_data()
-forecast_results = make_forecast(model, latest_data)
+if latest_data is not None:
+    forecast_results = make_forecast(model, latest_data)
+else:
+    forecast_results = pd.DataFrame()
 
 # คำนวณค่าสถิติสำคัญ
-current_pm25 = latest_data['pm_2_5'].iloc[-1]
-avg_pm25_7days = latest_data['pm_2_5'].tail(7*24).mean()
-max_forecast = forecast_results['predicted_pm_2_5'].max()
-min_forecast = forecast_results['predicted_pm_2_5'].min()
-avg_forecast = forecast_results['predicted_pm_2_5'].mean()
+if latest_data is not None and not latest_data.empty:
+    current_pm25 = latest_data['pm_2_5'].iloc[-1]
+    avg_pm25_7days = latest_data['pm_2_5'].tail(7*24).mean()
+    max_forecast = forecast_results['predicted_pm_2_5'].max()
+    min_forecast = forecast_results['predicted_pm_2_5'].min()
+    avg_forecast = forecast_results['predicted_pm_2_5'].mean()
 
-current_category, current_color = get_aqi_category(current_pm25)
-forecast_category, forecast_color = get_aqi_category(avg_forecast)
+    current_category, current_color = get_aqi_category(current_pm25)
+    forecast_category, forecast_color = get_aqi_category(avg_forecast)
 
-# แปลงข้อมูลประวัติเป็นรายวัน
-historical_daily = latest_data.copy()
-historical_daily['date'] = latest_data['timestamp'].dt.date
-historical_daily = historical_daily.groupby('date')['pm_2_5'].mean().reset_index()
-historical_daily['date'] = pd.to_datetime(historical_daily['date'])
-historical_daily = historical_daily.tail(30)  # แสดง 30 วันล่าสุด
+    # แปลงข้อมูลประวัติเป็นรายวัน
+    historical_daily = latest_data.copy()
+    historical_daily['date'] = latest_data['timestamp'].dt.date
+    historical_daily = historical_daily.groupby('date')['pm_2_5'].mean().reset_index()
+    historical_daily['date'] = pd.to_datetime(historical_daily['date'])
+    historical_daily = historical_daily.tail(30)  # แสดง 30 วันล่าสุด
+else:
+    current_pm25 = avg_pm25_7days = max_forecast = min_forecast = avg_forecast = 0
+    current_category = forecast_category = "ไม่มีข้อมูล"
+    current_color = forecast_color = "#000000"
+    historical_daily = pd.DataFrame()
 
 # CSS สำหรับ Dashboard
 external_stylesheets = []
@@ -221,10 +216,12 @@ app.layout = html.Div([
                 id='forecast-chart',
                 figure={
                     'data': [
-                        go.Bar(
+                        go.Scatter(
                             x=forecast_results['timestamp'].dt.strftime('%d/%m/%Y'),
                             y=forecast_results['predicted_pm_2_5'],
-                            marker={'color': [get_aqi_category(val)[1] for val in forecast_results['predicted_pm_2_5']]},
+                            mode='lines+markers',
+                            marker={'color': 'rgba(255, 99, 132, 0.8)'},
+                            line={'width': 2, 'color': 'rgba(255, 99, 132, 0.8)'},
                             hovertemplate='วันที่: %{x}<br>PM2.5: %{y:.1f} µg/m³<extra></extra>'
                         )
                     ],
@@ -268,38 +265,24 @@ app.layout = html.Div([
         ], className="chart-container"),
         
         html.Div([
-            html.H3("การเปรียบเทียบค่า PM2.5 จริงกับค่าพยากรณ์", style={'textAlign': 'center', 'marginTop': '20px'}),
+            html.H3("แผนที่แสดงข้อมูล PM2.5", style={'textAlign': 'center', 'marginTop': '20px'}),
             dcc.Graph(
-                id='comparison-chart',
-                figure={
-                    'data': [
-                        go.Scatter(
-                            x=pd.concat([historical_daily['date'].tail(7), pd.Series(forecast_results['timestamp'].dt.date)]),
-                            y=pd.concat([historical_daily['pm_2_5'].tail(7), pd.Series([None]*len(forecast_results))]),
-                            mode='lines+markers',
-                            name='ค่าจริง',
-                            marker={'color': 'rgba(54, 162, 235, 0.8)'},
-                            line={'width': 2, 'dash': 'dash'}
-                        ),
-                        go.Scatter(
-                            x=forecast_results['timestamp'].dt.date,
-                            y=forecast_results['predicted_pm_2_5'],
-                            mode='lines+markers',
-                            name='ค่าพยากรณ์',
-                            marker={'color': 'rgba(255, 99, 132, 0.8)'},
-                            line={'width': 2}
-                        )
-                    ],
-                    'layout': go.Layout(
-                        height=400,
-                        margin={'l': 40, 'r': 20, 't': 20, 'b': 30},
-                        xaxis={'title': 'วันที่'},
-                        yaxis={'title': 'PM2.5 (µg/m³)'},
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0.03)',
-                        legend={'orientation': 'h', 'y': 1.1}
-                    )
-                }
+                id='map-chart',
+                figure=px.scatter_mapbox(
+                    latest_data,
+                    lat="latitude",
+                    lon="longitude",
+                    size="pm_2_5",
+                    color="pm_2_5",
+                    hover_name="location",
+                    hover_data={"latitude": False, "longitude": False, "pm_2_5": True},
+                    color_continuous_scale=px.colors.cyclical.IceFire,
+                    size_max=15,
+                    zoom=5
+                ).update_layout(
+                    mapbox_style="open-street-map",
+                    margin={"r":0,"t":0,"l":0,"b":0}
+                )
             )
         ], className="chart-container"),
     ], className="content-container"),
